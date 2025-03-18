@@ -1,181 +1,174 @@
-"use client"
+"use client";
 
-import { useEffect, useRef } from "react"
-import * as d3 from "d3"
-import { geoNaturalEarth1, geoPath } from "d3-geo"
-import { feature } from "topojson-client"
-import type { CountryData } from "@/lib/types"
+import React, { useEffect, useRef, useState } from "react";
+import * as d3 from "d3";
+import * as topojson from "topojson-client";
+import { Feature, FeatureCollection, Geometry, GeoJsonProperties } from "geojson";
 
 interface WorldMapProps {
-  data: CountryData[]
-  onCountrySelect: (countryCode: string) => void
-  selectedCountry: string | null
+  className?: string;
+  onCountryClick?: (countryName: string) => void;
 }
 
-export default function WorldMap({ data, onCountrySelect, selectedCountry }: WorldMapProps) {
-  const svgRef = useRef<SVGSVGElement>(null)
-  const tooltipRef = useRef<HTMLDivElement>(null)
-  const wrapperRef = useRef<HTMLDivElement>(null)
+export const WorldMap: React.FC<WorldMapProps> = ({
+  className,
+  onCountryClick,
+}) => {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!data.length || !svgRef.current || !tooltipRef.current || !wrapperRef.current) return
+    if (!svgRef.current) return;
 
-    const width = wrapperRef.current.clientWidth
-    const height = width * 0.5
-
-    // Clear previous SVG content
-    const svg = d3.select(svgRef.current)
-    svg.selectAll("*").remove()
-
-    svg
-      .attr("width", width)
-      .attr("height", height)
-      .attr("viewBox", [0, 0, width, height])
-      .attr("style", "max-width: 100%; height: auto;")
-
-    const tooltip = d3
-      .select(tooltipRef.current)
-      .style("position", "absolute")
-      .style("visibility", "hidden")
-      .style("background-color", "rgba(0, 0, 0, 0.8)")
-      .style("color", "white")
-      .style("padding", "8px")
-      .style("border-radius", "4px")
-      .style("font-size", "12px")
-      .style("pointer-events", "none")
-      .style("z-index", "10")
-
-    // Create a map of country data by code for quick lookup
-    const countryDataMap = new Map(data.map((d) => [d.code, d]))
-
-    // Create color scale for cases per million
-    const colorScale = d3.scaleSequential(d3.interpolateYlOrRd).domain([0, d3.max(data, (d) => d.casesPerMillion) || 0])
-
-    // Load world map data
-    d3.json("/world-110m.json").then((worldData: any) => {
-      const countries = feature(worldData, worldData.objects.countries)
-
-      // Create projection
-      const projection = geoNaturalEarth1().fitSize([width, height], countries)
-
-      // Create path generator
-      const pathGenerator = geoPath().projection(projection)
-
-      // Draw countries
-      svg
-        .selectAll("path")
-        .data(countries.features)
-        .enter()
-        .append("path")
-        .attr("d", pathGenerator)
-        .attr("fill", (d: any) => {
-          const countryData = countryDataMap.get(d.id)
-          return countryData ? colorScale(countryData.casesPerMillion) : "#ccc"
-        })
-        .attr("stroke", "#fff")
-        .attr("stroke-width", 0.5)
-        .attr("class", (d: any) => `country ${d.id === selectedCountry ? "selected" : ""}`)
-        .classed("selected", (d: any) => d.id === selectedCountry)
-        .style("cursor", "pointer")
-        .on("mouseover", function (event, d: any) {
-          const countryData = countryDataMap.get(d.id)
-          if (countryData) {
-            d3.select(this).attr("stroke-width", 1.5)
-            tooltip.style("visibility", "visible").html(`
-                <strong>${countryData.name}</strong><br/>
-                Cases: ${countryData.cases.toLocaleString()}<br/>
-                Deaths: ${countryData.deaths.toLocaleString()}<br/>
-                Recovered: ${countryData.recovered.toLocaleString()}<br/>
-                Vaccinated: ${countryData.vaccinated.toLocaleString()}
-              `)
-          }
-        })
-        .on("mousemove", (event) => {
-          tooltip.style("top", `${event.pageY - 10}px`).style("left", `${event.pageX + 10}px`)
-        })
-        .on("mouseout", function () {
-          d3.select(this).attr("stroke-width", 0.5)
-          tooltip.style("visibility", "hidden")
-        })
-        .on("click", (event, d: any) => {
-          onCountrySelect(d.id)
-        })
-
-      // Update selected country
-      if (selectedCountry) {
-        svg
-          .selectAll(".country")
-          .attr("stroke-width", (d: any) => (d.id === selectedCountry ? 2 : 0.5))
-          .attr("stroke", (d: any) => (d.id === selectedCountry ? "#000" : "#fff"))
+    const fetchData = async () => {
+      try {
+        // Fetch world map data - using a more reliable source
+        const response = await fetch(
+          "https://unpkg.com/world-atlas@2.0.2/countries-50m.json"
+        );
+        const data = await response.json();
+        console.log("Fetched map data:", data);
+        drawMap(data);
+      } catch (error) {
+        console.error("Error fetching map data:", error);
       }
+    };
 
-      // Add legend
-      const legendWidth = 200
-      const legendHeight = 20
-      const legendX = width - legendWidth - 20
-      const legendY = height - 40
+    fetchData();
 
-      const legendScale = d3
-        .scaleLinear()
-        .domain([0, d3.max(data, (d) => d.casesPerMillion) || 0])
-        .range([0, legendWidth])
-
-      const legendAxis = d3
-        .axisBottom(legendScale)
-        .ticks(5)
-        .tickFormat((d) => `${d}`)
-
-      const legend = svg.append("g").attr("transform", `translate(${legendX}, ${legendY})`)
-
-      // Create gradient for legend
-      const defs = svg.append("defs")
-      const linearGradient = defs
-        .append("linearGradient")
-        .attr("id", "legend-gradient")
-        .attr("x1", "0%")
-        .attr("y1", "0%")
-        .attr("x2", "100%")
-        .attr("y2", "0%")
-
-      // Add color stops to gradient
-      const colorDomain = colorScale.domain()
-      linearGradient.append("stop").attr("offset", "0%").attr("stop-color", colorScale(colorDomain[0]))
-
-      linearGradient.append("stop").attr("offset", "100%").attr("stop-color", colorScale(colorDomain[1]))
-
-      // Draw legend rectangle
-      legend
-        .append("rect")
-        .attr("width", legendWidth)
-        .attr("height", legendHeight)
-        .style("fill", "url(#legend-gradient)")
-
-      // Add legend axis
-      legend.append("g").attr("transform", `translate(0, ${legendHeight})`).call(legendAxis).select(".domain").remove()
-
-      // Add legend title
-      legend.append("text").attr("x", 0).attr("y", -5).style("font-size", "12px").text("Cases per million")
-    })
-
-    // Handle window resize
-    const handleResize = () => {
-      if (wrapperRef.current) {
-        const newWidth = wrapperRef.current.clientWidth
-        const newHeight = newWidth * 0.5
-
-        svg.attr("width", newWidth).attr("height", newHeight).attr("viewBox", [0, 0, newWidth, newHeight])
+    // Cleanup function
+    return () => {
+      if (svgRef.current) {
+        d3.select(svgRef.current).selectAll("*").remove();
       }
+    };
+  }, []);
+
+  const drawMap = (worldData: any) => {
+    if (!svgRef.current) return;
+
+    // Clear previous contents
+    d3.select(svgRef.current).selectAll("*").remove();
+
+    // Set up the svg container
+    const svg = d3.select(svgRef.current);
+    const width = svgRef.current.clientWidth;
+    const height = svgRef.current.clientHeight;
+
+    // Create tooltip if it doesn't exist
+    if (!tooltipRef.current) {
+      const tooltipDiv = document.createElement("div");
+      tooltipDiv.className = "absolute hidden p-2 bg-black bg-opacity-70 text-white text-xs rounded pointer-events-none";
+      document.body.appendChild(tooltipDiv);
+      tooltipRef.current = tooltipDiv;
     }
 
-    window.addEventListener("resize", handleResize)
-    return () => window.removeEventListener("resize", handleResize)
-  }, [data, selectedCountry, onCountrySelect])
+    // Create a projection
+    const projection = d3
+      .geoMercator()
+      .scale((width - 3) / (2 * Math.PI))
+      .translate([width / 2, height / 2 + height * 0.2]);
+
+    // Create a path generator
+    const path = d3.geoPath().projection(projection);
+
+    // Convert TopoJSON to GeoJSON
+    const geoData = topojson.feature(
+      worldData, 
+      worldData.objects.countries || worldData.objects.land || worldData.objects.nations
+    );
+    
+    // Ensure we have a FeatureCollection
+    const countries = geoData.type === "FeatureCollection" 
+      ? geoData 
+      : { type: "FeatureCollection", features: [geoData] };
+
+    // Color scale for countries
+    const colorScale = d3
+      .scaleSequential(d3.interpolateBlues)
+      .domain([0, 100]);
+
+    // Draw countries
+    svg
+      .selectAll("path.country")
+      .data(countries.features)
+      .enter()
+      .append("path")
+      .attr("class", "country")
+      .attr("d", path as any)
+      .attr("fill", (d: any) => {
+        // Just a placeholder; in a real app, you'd use actual data
+        return d.properties.iso_a3 === selectedCountry 
+          ? "#1d4ed8" // Selected country in darker blue
+          : colorScale(Math.random() * 30 + 10); // Random light blue for other countries
+      })
+      .attr("stroke", "#ddd")
+      .attr("stroke-width", 0.5)
+      .style("cursor", "pointer") // Add pointer cursor to indicate clickable
+      .on("mouseover", function(event, d: any) {
+        d3.select(this)
+          .attr("stroke", "#333")
+          .attr("stroke-width", 1.5);
+        
+        const tooltip = d3.select(tooltipRef.current!);
+        tooltip
+          .html(d.properties.name || "Unknown")
+          .style("left", `${event.pageX + 10}px`)
+          .style("top", `${event.pageY - 28}px`)
+          .classed("hidden", false);
+      })
+      .on("mousemove", function(event) {
+        const tooltip = d3.select(tooltipRef.current!);
+        tooltip
+          .style("left", `${event.pageX + 10}px`)
+          .style("top", `${event.pageY - 28}px`);
+      })
+      .on("mouseout", function() {
+        d3.select(this)
+          .attr("stroke", "#ddd")
+          .attr("stroke-width", 0.5);
+        
+        d3.select(tooltipRef.current!)
+          .classed("hidden", true);
+      })
+      .on("click", function(event, d: any) {
+        // Log the full properties object to see what's available
+        console.log("Full country properties:", d.properties);
+        
+        // Try multiple potential property names for country name
+        const countryName = d.properties.name || d.properties.name_long || 
+                            d.properties.admin || d.properties.ADMIN || "Unknown";
+        
+        // Try multiple potential property names for country code (for highlighting)
+        const countryCode = d.properties.iso_a3 || d.properties.adm0_a3 || 
+                            d.properties.iso_n3 || d.properties.id || d.id || "UNK";
+        
+        // Log click for debugging
+        console.log(`Clicked on country:`, {
+          name: countryName,
+          code: countryCode,
+          rawData: d
+        });
+        
+        // Update internal state (still keep track of code for highlighting)
+        setSelectedCountry(countryCode);
+        
+        // Call the callback function with just the country name to match Dashboard expectations
+        if (onCountryClick) {
+          console.log(`Calling onCountryClick with: ${countryName}`);
+          onCountryClick(countryName);
+        }
+      });
+  };
 
   return (
-    <div ref={wrapperRef} className="relative w-full">
-      <svg ref={svgRef} className="w-full"></svg>
-      <div ref={tooltipRef} className="absolute pointer-events-none"></div>
+    <div className={`relative ${className || ""}`}>
+      <svg 
+        ref={svgRef} 
+        className="w-full h-full"
+        style={{ minHeight: "300px" }}
+      />
     </div>
-  )
-}
-
+  );
+};
